@@ -1,5 +1,5 @@
 # This Dockerfile is used to build an ROS + VNC + Tensorflow image based on Ubuntu 18.04
-FROM nvidia/cuda:10.0-cudnn7-devel-ubuntu18.04
+FROM nvidia/cuda:11.2.1-cudnn8-devel-ubuntu18.04
 
 LABEL maintainer "Henry Huang"
 MAINTAINER Henry Huang "https://github.com/henry2423"
@@ -37,6 +37,12 @@ RUN curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > mic
 RUN sudo apt-get install -y apt-transport-https && \
     sudo apt-get update && \
     sudo apt-get install -y code
+
+### Newest CMake -- alternative: from source
+RUN apt-get purge --auto-remove cmake
+RUN apt-get install -y git build-essential libssl-dev
+RUN git clone https://github.com/Kitware/CMake.git
+RUN CMake/bootstrap && make -j$(nproc) && sudo make install && rm -r CMake
 
 ### VNC Installation
 LABEL io.k8s.description="VNC Container with ROS with Xfce window manager" \
@@ -99,12 +105,20 @@ RUN $INST_SCRIPTS/set_user_permission.sh $STARTUPDIR $HOME
 RUN apt-get update && \
     apt-get install -y vim \
     tmux \
-    git
+    python
+
+RUN apt-get install -y wget python-dev python-testresources libgtk2.0-0 unzip libblas-dev liblapack-dev libhdf5-dev && \
+    curl https://bootstrap.pypa.io/pip/2.7/get-pip.py -o get-pip.py && \
+    python2.7 get-pip.py
+
+RUN pip install -U rosdep
+
+RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F42ED6FBAB17C654
 
 # Install ROS
 RUN sh -c 'echo "deb http://packages.ros.org/ros/ubuntu `lsb_release -cs` main" > /etc/apt/sources.list.d/ros-latest.list' && \
     apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-key 421C365BD9FF1F717815A3895523BAEEB01FA116 && \
-    apt-get update && apt-get install -y ros-melodic-desktop && \
+    apt-get update && apt-get install -y ros-melodic-desktop-full && \
     apt-get install -y python-rosinstall && \
     rosdep init
 
@@ -124,14 +138,26 @@ RUN /bin/bash -c "source ~/.bashrc"
 ###Tensorflow Installation
 # Install pip
 USER root
-RUN apt-get install -y wget python-pip python-dev libgtk2.0-0 unzip libblas-dev liblapack-dev libhdf5-dev && \
-    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python get-pip.py
 
-# prepare default python 2.7 environment
-USER root
-RUN pip install --ignore-installed --upgrade https://storage.googleapis.com/tensorflow/linux/gpu/tensorflow_gpu-1.11.0-cp27-none-linux_x86_64.whl && \
-    pip install keras==2.2.4 matplotlib pandas scipy h5py testresources scikit-learn
+# prepare default python 2.7 environment with 
+RUN python2.7 -m pip install --ignore-installed --upgrade https://storage.googleapis.com/tensorflow/linux/gpu/tensorflow_gpu-1.11.0-cp27-none-linux_x86_64.whl && \
+    python2.7 -m pip install keras==2.2.4 matplotlib pandas scipy h5py testresources scikit-learn
+
+# install pytorch
+RUN curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \
+     chmod +x ~/miniconda.sh && \
+     ~/miniconda.sh -b -p /opt/conda && \
+     rm ~/miniconda.sh && \
+     /opt/conda/bin/conda install -y python=3.8 numpy pyyaml scipy ipython mkl mkl-include ninja cython typing && \
+     /opt/conda/bin/conda install -y -c pytorch magma-cuda100 && \
+     /opt/conda/bin/conda clean -ya
+ENV PATH /opt/conda/bin:$PATH
+# This must be done before pip so that requirements.txt is available
+RUN conda install pytorch torchvision torchaudio cudatoolkit=11.1 -c pytorch -c conda-forge
+
+RUN apt-get update && apt-get install -y python3-pip && apt-get upgrade -y && apt-get autoremove
+
+WORKDIR /home
 
 # Expose Tensorboard
 EXPOSE 6006
